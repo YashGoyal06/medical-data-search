@@ -1,1 +1,33 @@
+name: Build Windows Executable
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: # Allows you to run it manually from the GitHub website
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' # Best compatibility for PyInstaller
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller google-genai pillow
+
+    - name: Build EXE with PyInstaller
+      run: pyinstaller --onefile --windowed medisearch.py
+
+    - name: Upload EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: MediSearch-Windows-App
+        path: dist/medisearch.exe
