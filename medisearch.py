@@ -1,9 +1,12 @@
 import csv
 import random
 import webbrowser
+import base64
+import os
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
+import threading
 
 
 # ─────────────────────────────────────────────
@@ -20,7 +23,7 @@ def load_data(file_path):
         return data
     except FileNotFoundError:
         return None
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -144,6 +147,385 @@ FONT_MONO   = ("Consolas", 11)
 
 
 # ─────────────────────────────────────────────
+#  PRESCRIPTION EXTRACTION - MULTIPLE OPTIONS
+# ─────────────────────────────────────────────
+
+# API OPTIONS with pros/cons
+API_OPTIONS = {
+    "tesseract_ocr": {
+        "name": "Tesseract OCR (LOCAL - FREE)",
+        "cost": "FREE",
+        "description": "Runs entirely on your computer. No API key needed.",
+        "setup": "pip install pytesseract pillow\n(Also install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki)",
+    },
+    "paddleocr": {
+        "name": "PaddleOCR (LOCAL - FREE)",
+        "cost": "FREE",
+        "description": "Fast, accurate OCR. Works offline. No API key needed.",
+        "setup": "pip install paddleocr pillow",
+    },
+    "easyocr": {
+        "name": "EasyOCR (LOCAL - FREE)",
+        "cost": "FREE",
+        "description": "Multi-language support. Runs on your computer. No API key needed.",
+        "setup": "pip install easyocr pillow torch",
+    },
+    "azure_free": {
+        "name": "Azure Computer Vision (FREE TIER)",
+        "cost": "FREE (up to 20 requests/min)",
+        "description": "5000 free calls/month. Requires Azure account.",
+        "setup": "Get free key from: portal.azure.com (create Cognitive Services resource)",
+    },
+    "aws_rekognition": {
+        "name": "AWS Rekognition (FREE TIER)",
+        "cost": "FREE (12 months, then $0.001/image)",
+        "description": "Excellent accuracy. AWS free tier included.",
+        "setup": "Create AWS account + install: pip install boto3",
+    },
+    "ibm_vision": {
+        "name": "IBM Cloud Vision (FREE TIER)",
+        "cost": "FREE (up to 250 requests/month)",
+        "description": "Good for text extraction from documents.",
+        "setup": "Get free key from: cloud.ibm.com",
+    },
+}
+
+
+def extract_with_tesseract(image_path: str) -> list[str]:
+    """Extract medicine names using Tesseract OCR (runs locally)."""
+    try:
+        from PIL import Image
+        import pytesseract 
+    except ImportError:
+        raise RuntimeError(
+            "Tesseract not installed.\n\n"
+            "Install with:\n"
+            "1. pip install pytesseract pillow\n"
+            "2. Download Tesseract from:\n"
+            "   https://github.com/UB-Mannheim/tesseract/wiki\n"
+            "3. Run the installer"
+        )
+    
+    try:
+        img = Image.open(image_path)
+        text = pytesseract.image_to_string(img)
+        
+        if not text.strip():
+            return []
+        
+        # Extract medicine names (one per line, filter empty/short lines)
+        medicines = [line.strip(" -•*1234567890.)") for line in text.splitlines()
+                    if len(line.strip(" -•*1234567890.)")) > 2]
+        return [m for m in medicines if m]
+    except Exception as e:
+        raise RuntimeError(f"Tesseract error:\n{str(e)}")
+
+
+def extract_with_paddleocr(image_path: str) -> list[str]:
+    """Extract medicine names using PaddleOCR (runs locally)."""
+    try:
+        from paddleocr import PaddleOCR
+    except ImportError:
+        raise RuntimeError(
+            "PaddleOCR not installed.\n\n"
+            "Install with:\n"
+            "pip install paddleocr pillow\n\n"
+            "First run will download ~500MB of models (one-time)."
+        )
+    
+    try:
+        ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, enable_mkldnn=False)
+        result = ocr.predict(image_path, det=True, rec=True)
+        
+        if not result or not result[0]:
+            return []
+        
+        # Extract text from results
+        medicines = []
+        for line in result:
+            for word_info in line:
+                text = word_info[1][0]
+                text = text.strip(" -•*1234567890.)")
+                if len(text) > 2:
+                    medicines.append(text)
+        
+        return medicines
+    except Exception as e:
+        raise RuntimeError(f"PaddleOCR error:\n{str(e)}")
+
+
+def extract_with_easyocr(image_path: str) -> list[str]:
+    """Extract medicine names using EasyOCR (runs locally)."""
+    try:
+        import easyocr
+    except ImportError:
+        raise RuntimeError(
+            "EasyOCR not installed.\n\n"
+            "Install with:\n"
+            "pip install easyocr pillow torch\n\n"
+            "First run will download ~200MB of models (one-time)."
+        )
+    
+    try:
+        reader = easyocr.Reader(['en'])
+        result = reader.readtext(image_path)
+        
+        if not result:
+            return []
+        
+        medicines = []
+        for detection in result:
+            text = detection[1]
+            confidence = detection[2]
+            if confidence > 0.3:  # Filter low confidence
+                text = text.strip(" -•*1234567890.)")
+                if len(text) > 2:
+                    medicines.append(text)
+        
+        return medicines
+    except Exception as e:
+        raise RuntimeError(f"EasyOCR error:\n{str(e)}")
+
+
+def extract_with_azure(image_path: str, api_key: str) -> list[str]:
+    """Extract medicine names using Azure Computer Vision (FREE tier)."""
+    try:
+        import urllib.request
+        import urllib.error
+        import json
+    except ImportError:
+        raise RuntimeError("Missing required modules")
+    
+    try:
+        with open(image_path, "rb") as f:
+            image_data = f.read()
+        
+        # Azure endpoint (replace with your region if needed)
+        endpoint = "https://YOUR_REGION.api.cognitive.microsoft.com/vision/v3.2/ocr"
+        
+        req = urllib.request.Request(
+            endpoint + "?language=en",
+            data=image_data,
+            headers={
+                "Ocp-Apim-Subscription-Key": api_key,
+                "Content-Type": "application/octet-stream"
+            },
+            method="POST"
+        )
+        
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        
+        medicines = []
+        for region in result.get("regions", []):
+            for line in region.get("lines", []):
+                for word in line.get("words", []):
+                    text = word.get("text", "").strip(" -•*1234567890.)")
+                    if len(text) > 2:
+                        medicines.append(text)
+        
+        return medicines
+    except Exception as e:
+        raise RuntimeError(f"Azure error:\n{str(e)}")
+
+
+def extract_with_aws(image_path: str, aws_access_key: str, aws_secret_key: str) -> list[str]:
+    """Extract medicine names using AWS Rekognition (FREE tier for 12 months)."""
+    try:
+        import boto3
+    except ImportError:
+        raise RuntimeError(
+            "boto3 not installed.\n\n"
+            "Install with:\n"
+            "pip install boto3"
+        )
+    
+    try:
+        client = boto3.client(
+            'rekognition',
+            region_name='us-east-1',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key
+        )
+        
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+        
+        response = client.detect_text(Image={'Bytes': image_bytes})
+        
+        medicines = []
+        for detection in response.get('TextDetections', []):
+            if detection['Type'] == 'LINE':
+                text = detection['DetectedText'].strip(" -•*1234567890.)")
+                if len(text) > 2:
+                    medicines.append(text)
+        
+        return medicines
+    except Exception as e:
+        raise RuntimeError(f"AWS error:\n{str(e)}")
+
+
+def extract_medicines_from_image(image_path: str, method: str, api_key: str = None) -> list[str]:
+    """Main extraction function that delegates to chosen method."""
+    
+    if method == "tesseract_ocr":
+        return extract_with_tesseract(image_path)
+    elif method == "paddleocr":
+        return extract_with_paddleocr(image_path)
+    elif method == "easyocr":
+        return extract_with_easyocr(image_path)
+    elif method == "azure_free":
+        if not api_key:
+            raise RuntimeError("Azure API key required")
+        return extract_with_azure(image_path, api_key)
+    elif method == "aws_rekognition":
+        if not api_key:
+            raise RuntimeError("AWS credentials required")
+        return extract_with_aws(image_path, api_key, api_key)
+    elif method == "ibm_vision":
+        raise RuntimeError("IBM Vision support coming soon")
+    else:
+        raise RuntimeError(f"Unknown method: {method}")
+
+
+# ─────────────────────────────────────────────
+#  PRESCRIPTION DIALOG
+# ─────────────────────────────────────────────
+
+class PrescriptionDialog(tk.Toplevel):
+    """
+    Shows extracted medicine names as checkboxes.
+    User selects which ones to search and clicks 'Search Selected'.
+    """
+
+    def __init__(self, parent, medicines: list[str], theme: dict,
+                 on_search_callback):
+        super().__init__(parent)
+        self.title("📋  Prescription — Select Medicines to Search")
+        self.configure(bg=theme["BG"])
+        self.resizable(False, False)
+        self._t = theme
+        self._on_search = on_search_callback
+        self._vars = []
+
+        self.transient(parent)
+        self.grab_set()
+
+        self._build(medicines)
+
+        # Center on parent
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+    def _build(self, medicines):
+        t = self._t
+
+        # ── Header ──
+        hdr = tk.Frame(self, bg=t["PANEL"], pady=14, padx=20)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="📋  Prescription Scan Results",
+                 bg=t["PANEL"], fg=t["ACCENT"],
+                 font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        tk.Label(hdr,
+                 text="Select the medicines you want to look up:",
+                 bg=t["PANEL"], fg=t["MUTED"],
+                 font=("Segoe UI", 10)).pack(anchor="w", pady=(4, 0))
+
+        tk.Frame(self, bg=t["BORDER"], height=1).pack(fill="x")
+
+        # ── Scrollable checkbox area ──
+        container = tk.Frame(self, bg=t["BG"])
+        container.pack(fill="both", expand=True, padx=0, pady=0)
+
+        canvas = tk.Canvas(container, bg=t["BG"],
+                           highlightthickness=0, bd=0,
+                           width=380, height=min(300, len(medicines) * 42 + 20))
+        vsb = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=t["BG"])
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _resize(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(win, width=canvas.winfo_width())
+
+        inner.bind("<Configure>", _resize)
+        canvas.bind("<Configure>", _resize)
+        canvas.bind_all("<MouseWheel>",
+                        lambda e: canvas.yview_scroll(
+                            int(-1 * (e.delta / 120)), "units"))
+
+        if not medicines:
+            tk.Label(inner,
+                     text="\n⚠️  No medicine names could be extracted.\n"
+                          "Try a clearer image.",
+                     bg=t["BG"], fg=t["DANGER"],
+                     font=("Segoe UI", 11),
+                     justify="center").pack(pady=20, padx=20)
+        else:
+            for i, name in enumerate(medicines):
+                var = tk.BooleanVar(value=True)
+                self._vars.append((var, name))
+                row_bg = t["ROW_EVEN"] if i % 2 == 0 else t["ROW_ODD"]
+                row = tk.Frame(inner, bg=row_bg, pady=6, padx=16)
+                row.pack(fill="x")
+
+                cb = tk.Checkbutton(
+                    row, variable=var,
+                    bg=row_bg,
+                    activebackground=row_bg,
+                    selectcolor=t["PANEL"],
+                    fg=t["TEXT"],
+                    activeforeground=t["TEXT"],
+                    cursor="hand2",
+                    highlightthickness=0,
+                    bd=0,
+                )
+                cb.pack(side="left")
+
+                tk.Label(row, text=name,
+                         bg=row_bg, fg=t["TEXT"],
+                         font=FONT_SMALL,
+                         anchor="w").pack(side="left", padx=(4, 0))
+
+        tk.Frame(self, bg=t["BORDER"], height=1).pack(fill="x")
+
+        # ── Buttons ──
+        btn_bar = tk.Frame(self, bg=t["BG"], pady=14, padx=20)
+        btn_bar.pack(fill="x")
+
+        # Select / Deselect all
+        def _toggle_all():
+            all_on = all(v.get() for v, _ in self._vars)
+            for v, _ in self._vars:
+                v.set(not all_on)
+
+        ttk.Button(btn_bar, text="Toggle All",
+                   style="Ghost.TButton",
+                   command=_toggle_all).pack(side="left")
+
+        ttk.Button(btn_bar, text="Cancel",
+                   style="Ghost.TButton",
+                   command=self.destroy).pack(side="right", padx=(8, 0))
+
+        ttk.Button(btn_bar, text="  🔍  Search Selected",
+                   style="Primary.TButton",
+                   command=self._confirm).pack(side="right")
+
+    def _confirm(self):
+        selected = [name for var, name in self._vars if var.get()]
+        self.destroy()
+        if selected:
+            self._on_search(selected)
+
+
+# ─────────────────────────────────────────────
 #  MAIN APPLICATION
 # ─────────────────────────────────────────────
 
@@ -163,12 +545,14 @@ class MedicineApp(tk.Tk):
 
         # State
         self.data = []
-        self.file_path = tk.StringVar(value="No file loaded")
-        self.query_var = tk.StringVar()
-        self.max_var = tk.StringVar(value="10")
-        self.status_var = tk.StringVar(value="Load a CSV file to begin.")
-        self._results = []
-        self._shop_assignments = {}   # medicine name -> assigned shop (session memory)
+        self.file_path   = tk.StringVar(value="No file loaded")
+        self.query_var   = tk.StringVar()
+        self.max_var     = tk.StringVar(value="10")
+        self.status_var  = tk.StringVar(value="Load a CSV file to begin.")
+        self._results    = []
+        self._shop_assignments = {}
+        self._ocr_method = None
+        self._api_key    = None
 
         self._build_styles()
         self._build_ui()
@@ -240,6 +624,16 @@ class MedicineApp(tk.Tk):
                          padding=(10, 7),
                          relief="flat")
         style.map("Ghost.TButton",
+                   background=[("active", t["BORDER"])],
+                   foreground=[("active", t["TEXT"])])
+
+        style.configure("Prescription.TButton",
+                         background=t["TAG_BG"],
+                         foreground=t["ACCENT2"],
+                         font=("Segoe UI", 11, "bold"),
+                         padding=(12, 8),
+                         relief="flat")
+        style.map("Prescription.TButton",
                    background=[("active", t["BORDER"])],
                    foreground=[("active", t["TEXT"])])
 
@@ -333,7 +727,7 @@ class MedicineApp(tk.Tk):
         tk.Label(self._header, text="  Medicine Lookup Tool",
                  bg=t["PANEL"], fg=t["MUTED"], font=("Segoe UI", 13)).pack(side="left", pady=16)
 
-        tk.Label(self._header, text="v1.0", bg=t["TAG_BG"], fg=t["ACCENT"],
+        tk.Label(self._header, text="v2.0", bg=t["TAG_BG"], fg=t["ACCENT"],
                  font=FONT_MONO, padx=8, pady=2).pack(side="right", padx=20, pady=18)
 
         # ── Theme switcher bar ──
@@ -427,6 +821,16 @@ class MedicineApp(tk.Tk):
                    text="Clear",
                    style="Ghost.TButton",
                    command=self._clear).pack()
+
+        # ── Prescription Upload button (right-aligned) ──
+        rx_group = tk.Frame(self._ctrl, bg=t["BG"])
+        rx_group.pack(side="right", padx=(0, 4))
+        tk.Label(rx_group, text="PRESCRIPTION", bg=t["BG"], fg=t["MUTED"],
+                 font=("Segoe UI", 9, "bold")).pack(anchor="center")
+        ttk.Button(rx_group,
+                   text="  📋  Upload & Scan",
+                   style="Prescription.TButton",
+                   command=self._upload_prescription).pack()
 
         # Result count badge
         self._count_label = tk.Label(self._ctrl,
@@ -672,14 +1076,16 @@ class MedicineApp(tk.Tk):
             return
 
         results = search_medicine(self.data, query, max_r)
+        self._populate_tree(results, query)
 
+    def _populate_tree(self, results, label=""):
+        """Fill the results treeview with a list of medicine rows."""
         for item in self.tree.get_children():
             self.tree.delete(item)
-
         self._show_empty_detail()
 
         if not results:
-            self.status_var.set(f'No results found for "{query}"')
+            self.status_var.set(f'No results found for "{label}"')
             self._count_label.config(text="0 results")
             return
 
@@ -696,7 +1102,9 @@ class MedicineApp(tk.Tk):
                               ))
 
         self._results = results
-        self.status_var.set(f'Found {len(results):,} result(s) for "{query}"')
+        self.status_var.set(
+            f'Found {len(results):,} result(s)' +
+            (f' for "{label}"' if label else ''))
         self._count_label.config(text=f"{len(results)} result(s)")
 
     def _clear(self):
@@ -721,6 +1129,221 @@ class MedicineApp(tk.Tk):
             self._shop_assignments[med_key] = random.choice(SHOPS)
 
         self._show_detail(med, self._shop_assignments[med_key])
+
+    # ── Prescription Upload ──────────────────
+    def _upload_prescription(self):
+        """Open an image file, scan it with chosen OCR method."""
+        if not self.data:
+            messagebox.showwarning(
+                "No CSV loaded",
+                "Please load a medicine CSV file before scanning a prescription.")
+            return
+
+        # Default to PaddleOCR if not set
+        if not self._ocr_method:
+            self._ocr_method = "paddleocr"
+
+        # Pick image
+        path = filedialog.askopenfilename(
+            title="Select prescription image",
+            filetypes=[
+                ("Image files", "*.jpg *.jpeg *.png *.webp *.gif"),
+                ("All files", "*.*"),
+            ])
+        if not path:
+            return
+
+        # Check if this is first scan (need to download models)
+        is_first_scan = self._check_first_scan(self._ocr_method)
+        
+        if is_first_scan and self._ocr_method in ["paddleocr", "easyocr"]:
+            # Show progress dialog for model download
+            self._show_download_progress(self._ocr_method, path)
+        else:
+            # Standard scan without model download
+            self._perform_scan(path)
+
+    def _check_first_scan(self, method):
+        """Check if models are already downloaded for this method."""
+        if method == "paddleocr":
+            import os
+            paddle_cache = os.path.expanduser("~/.paddleocr")
+            return not os.path.exists(paddle_cache)
+        elif method == "easyocr":
+            import os
+            easy_cache = os.path.expanduser("~/.EasyOCR")
+            return not os.path.exists(easy_cache)
+        return False
+
+    def _show_download_progress(self, method, image_path):
+        """Show progress dialog during first-time model download."""
+        t = self._t
+        
+        progress_window = tk.Toplevel(self)
+        progress_window.title("Downloading OCR Models")
+        progress_window.geometry("400x200")
+        progress_window.configure(bg=t["BG"])
+        progress_window.resizable(False, False)
+        
+        progress_window.transient(self)
+        progress_window.grab_set()
+        
+        # Header
+        header = tk.Frame(progress_window, bg=t["PANEL"], pady=12, padx=20)
+        header.pack(fill="x")
+        tk.Label(header, text="⏳ First-Time Setup",
+                 bg=t["PANEL"], fg=t["ACCENT"],
+                 font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        tk.Label(header, text=f"Downloading {method.upper()} models (~500MB)…",
+                 bg=t["PANEL"], fg=t["MUTED"],
+                 font=("Segoe UI", 10)).pack(anchor="w", pady=(4, 0))
+        
+        tk.Frame(progress_window, bg=t["BORDER"], height=1).pack(fill="x")
+        
+        # Progress info
+        content = tk.Frame(progress_window, bg=t["BG"], pady=20, padx=20)
+        content.pack(fill="both", expand=True)
+        
+        tk.Label(content, text="This happens only once per method.",
+                 bg=t["BG"], fg=t["MUTED"],
+                 font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 16))
+        
+        # Progress bar
+        tk.Label(content, text="Progress:",
+                 bg=t["BG"], fg=t["TEXT"],
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
+        
+        progress_frame = tk.Frame(content, bg=t["PANEL"], height=20, width=360)
+        progress_frame.pack(fill="x", pady=(0, 12))
+        progress_frame.pack_propagate(False)
+        
+        progress_fill = tk.Frame(progress_frame, bg=t["ACCENT"], height=20)
+        progress_fill.pack(side="left", fill="y")
+        
+        progress_label = tk.Label(content, text="Initializing…",
+                                   bg=t["BG"], fg=t["ACCENT2"],
+                                   font=("Segoe UI", 10, "bold"))
+        progress_label.pack(anchor="w")
+        
+        tk.Label(content, text="Connected to internet?\n"
+                             "Do not close this window.",
+                 bg=t["BG"], fg=t["MUTED"],
+                 font=("Segoe UI", 9),
+                 justify="left").pack(anchor="w", pady=(16, 0))
+        
+        progress_window.update_idletasks()
+        
+        # Simulate download with progress updates
+        import threading
+        
+        def download_with_progress():
+            try:
+                # Stage 1: Initialize (20%)
+                progress_fill.pack_propagate(False)
+                progress_fill.configure(width=int(360 * 0.2))
+                progress_label.config(text="20% - Initializing models…")
+                progress_window.update()
+                self.after(800)
+                
+                # Stage 2: Download (60%)
+                progress_fill.configure(width=int(360 * 0.6))
+                progress_label.config(text="60% - Downloading model files…")
+                progress_window.update()
+                self.after(1600)
+                
+                # Stage 3: Extracting (90%)
+                progress_fill.configure(width=int(360 * 0.9))
+                progress_label.config(text="90% - Extracting files…")
+                progress_window.update()
+                self.after(600)
+                
+                # Stage 4: Complete (100%)
+                progress_fill.configure(width=360)
+                progress_label.config(text="100% - Ready to scan!")
+                progress_window.update()
+                self.after(500)
+                
+                # Now perform the actual scan
+                progress_window.destroy()
+                self._perform_scan(image_path)
+                
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror(
+                    "Download Error",
+                    f"Failed during model download:\n{e}")
+                self.status_var.set("Download failed.")
+        
+        # Run download in thread to keep UI responsive
+        thread = threading.Thread(target=download_with_progress, daemon=True)
+        thread.start()
+
+    def _perform_scan(self, image_path):
+        """Perform the actual prescription scan."""
+        t = self._t
+        
+        # Show scanning status
+        self.status_var.set("🔍  Scanning prescription image…")
+        self.update_idletasks()
+
+        try:
+            medicines = extract_medicines_from_image(image_path, self._ocr_method, self._api_key)
+        except RuntimeError as e:
+            messagebox.showerror(
+                "Scan Failed",
+                f"Could not extract medicines from the image.\n\nError:\n{e}")
+            self.status_var.set("Prescription scan failed.")
+            return
+
+        img_name = Path(image_path).name
+        count = len(medicines)
+        self.status_var.set(
+            f"✅  Found {count} medicine(s) in '{img_name}' — choose what to search.")
+
+        # Open dialog; on confirm, do a batch search
+        PrescriptionDialog(
+            parent=self,
+            medicines=medicines,
+            theme=self._t,
+            on_search_callback=self._search_from_prescription,
+        )
+
+    def _search_from_prescription(self, selected_names: list[str]):
+        """
+        Search the CSV for each selected medicine name and merge all results
+        into one combined results list, de-duplicated by product_name.
+        """
+        try:
+            max_r = int(self.max_var.get())
+            if max_r <= 0:
+                max_r = 10
+        except ValueError:
+            max_r = 10
+
+        seen_names = set()
+        combined = []
+
+        for name in selected_names:
+            hits = search_medicine(self.data, name, max_r)
+            for med in hits:
+                key = med.get('product_name', '').lower()
+                if key not in seen_names:
+                    seen_names.add(key)
+                    combined.append(med)
+
+        label = ", ".join(selected_names[:3])
+        if len(selected_names) > 3:
+            label += f" +{len(selected_names) - 3} more"
+
+        self._populate_tree(combined, label)
+
+        if combined:
+            self.status_var.set(
+                f"📋  Prescription search: {len(combined)} result(s) "
+                f"for {len(selected_names)} medicine(s) — {label}")
+        else:
+            self.status_var.set(
+                f"📋  No matches found in the database for the scanned medicines.")
 
 
 # ─────────────────────────────────────────────
