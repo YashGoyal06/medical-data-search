@@ -10,15 +10,18 @@ from pathlib import Path
 from google import genai
 import PIL.Image
 
-# --- THE REVERSE STRING HACK ---
-# GitHub's scanner cannot read this because it is backwards!
-fake_key = "MfO4cUM8J5Y056Frro9BBAFxGPA_8TLxDySazIA"
+import os
+from google import genai
 
-# Python flips it back to normal instantly at runtime
-real_key = fake_key[::-1] 
+# Try to load the key from a separate config file
+try:
+    import config
+    my_api_key = config.GEMINI_API_KEY
+except ImportError:
+    my_api_key = "MISSING_KEY"
 
 # Initialize the Gemini client
-client = genai.Client(api_key=real_key)
+client = genai.Client(api_key=my_api_key)
 
 # ─────────────────────────────────────────────
 #  DATA LOGIC
