@@ -20,6 +20,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install pyinstaller google-genai pillow
 
+    - name: Inject Secret API Key
+      # This securely creates the config.py file ONLY on the temporary build server
+      run: echo "GEMINI_API_KEY = '${{ secrets.GEMINI_API_KEY }}'" > config.py
+
     - name: Build EXE with PyInstaller
       run: pyinstaller --onefile --windowed medisearch.py
 
