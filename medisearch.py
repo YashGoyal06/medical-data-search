@@ -9,20 +9,13 @@ from pathlib import Path
 # --- NEW IMPORTS FOR AI OCR ---
 from google import genai
 import PIL.Image
-
 import os
-from google import genai
-
-# Try to load the key from a separate config file
 try:
     import config
     my_api_key = config.GEMINI_API_KEY
 except ImportError:
     my_api_key = "MISSING_KEY"
-
-# Initialize the Gemini client
 client = genai.Client(api_key=my_api_key)
-
 # ─────────────────────────────────────────────
 #  DATA LOGIC
 # ─────────────────────────────────────────────
@@ -168,8 +161,8 @@ class MedicineApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("MediSearch — Medicine Lookup")
-        self.geometry("1200x760")
-        self.minsize(950, 620)
+        self.geometry("1280x800")
+        self.minsize(1000, 650)
         self.resizable(True, True)
 
         # Active theme
@@ -183,7 +176,7 @@ class MedicineApp(tk.Tk):
         self.file_path = tk.StringVar(value="No file loaded")
         self.query_var = tk.StringVar()
         self.max_var = tk.StringVar(value="10")
-        self.status_var = tk.StringVar(value="Load a CSV file to begin.")
+        self.status_var = tk.StringVar(value="Ready. Load a CSV file to begin.")
         self._results = []
         self._shop_assignments = {}   # medicine name -> assigned shop (session memory)
 
@@ -215,28 +208,13 @@ class MedicineApp(tk.Tk):
                          foreground=t["TEXT"],
                          font=FONT_LABEL)
 
-        style.configure("Muted.TLabel",
-                         background=t["BG"],
-                         foreground=t["MUTED"],
-                         font=FONT_SMALL)
-
-        style.configure("Accent.TLabel",
-                         background=t["BG"],
-                         foreground=t["ACCENT"],
-                         font=FONT_BOLD)
-
-        style.configure("Title.TLabel",
-                         background=t["BG"],
-                         foreground=t["TEXT"],
-                         font=FONT_TITLE)
-
         style.configure("Search.TEntry",
-                         fieldbackground=t["PANEL"],
+                         fieldbackground=t["BG"],
                          foreground=t["TEXT"],
                          insertcolor=t["TEXT"],
                          borderwidth=1,
                          relief="solid",
-                         padding=(10, 7))
+                         padding=(10, 8))
         style.map("Search.TEntry",
                    fieldbackground=[("focus", t["HEADER_BG"])],
                    bordercolor=[("focus", t["ACCENT"])])
@@ -245,16 +223,16 @@ class MedicineApp(tk.Tk):
                          background=t["ACCENT"],
                          foreground="#ffffff",
                          font=FONT_BOLD,
-                         padding=(16, 9),
+                         padding=(10, 10),
                          relief="flat")
         style.map("Primary.TButton",
                    background=[("active", t["ACCENT"]), ("pressed", t["ACCENT"])])
 
         style.configure("Ghost.TButton",
-                         background=t["PANEL"],
+                         background=t["BG"],
                          foreground=t["MUTED"],
                          font=FONT_SMALL,
-                         padding=(10, 7),
+                         padding=(10, 8),
                          relief="flat")
         style.map("Ghost.TButton",
                    background=[("active", t["BORDER"])],
@@ -264,7 +242,7 @@ class MedicineApp(tk.Tk):
                          background=t["TAG_BG"],
                          foreground=t["MUTED"],
                          font=("Segoe UI", 10),
-                         padding=(10, 5),
+                         padding=(10, 6),
                          relief="flat")
         style.map("Theme.TButton",
                    background=[("active", t["BORDER"])],
@@ -274,7 +252,7 @@ class MedicineApp(tk.Tk):
                          background=t["ACCENT"],
                          foreground="#ffffff",
                          font=("Segoe UI", 10, "bold"),
-                         padding=(10, 5),
+                         padding=(10, 6),
                          relief="flat")
 
         style.configure("Treeview",
@@ -282,14 +260,14 @@ class MedicineApp(tk.Tk):
                          fieldbackground=t["ROW_EVEN"],
                          foreground=t["TEXT"],
                          font=FONT_SMALL,
-                         rowheight=40,
+                         rowheight=45,
                          borderwidth=0)
         style.configure("Treeview.Heading",
                          background=t["HEADER_BG"],
                          foreground=t["MUTED"],
                          font=("Segoe UI", 11, "bold"),
                          relief="flat",
-                         padding=(8, 8))
+                         padding=(10, 12))
         style.map("Treeview",
                    background=[("selected", t["ROW_SEL"])],
                    foreground=[("selected", t["TEXT"])])
@@ -301,240 +279,153 @@ class MedicineApp(tk.Tk):
                          troughcolor=t["BG"],
                          arrowcolor=t["MUTED"],
                          borderwidth=0,
-                         width=10)
+                         width=12)
         style.configure("Horizontal.TScrollbar",
                          background=t["BORDER"],
                          troughcolor=t["BG"],
                          arrowcolor=t["MUTED"],
                          borderwidth=0,
-                         width=10)
+                         width=12)
 
         style.configure("TSpinbox",
-                         fieldbackground=t["PANEL"],
+                         fieldbackground=t["BG"],
                          foreground=t["TEXT"],
                          insertcolor=t["TEXT"],
                          arrowcolor=t["MUTED"],
-                         background=t["PANEL"],
+                         background=t["BG"],
                          borderwidth=1,
                          relief="solid",
-                         padding=(8, 7))
+                         padding=(8, 8))
 
-        style.configure("TSeparator", background=t["BORDER"])
-
-        style.configure("TNotebook",
-                         background=t["PANEL"],
-                         borderwidth=0,
-                         tabmargins=[0, 0, 0, 0])
-        style.configure("TNotebook.Tab",
-                         background=t["PANEL"],
-                         foreground=t["MUTED"],
-                         font=FONT_SMALL,
-                         padding=(14, 7))
-        style.map("TNotebook.Tab",
-                   background=[("selected", t["BG"])],
-                   foreground=[("selected", t["ACCENT"])])
-
-    # ── UI Layout ───────────────────────────
+    # ── UI Layout (COMPLETELY REDESIGNED TO SIDEBAR) ───────────────────────────
     def _build_ui(self):
         t = self._t
 
-        # ── Header bar ──
-        self._header = tk.Frame(self, bg=t["PANEL"], height=68)
-        self._header.pack(fill="x", side="top")
-        self._header.pack_propagate(False)
+        # ── SIDEBAR (Left Panel) ──
+        self._sidebar = tk.Frame(self, bg=t["PANEL"], width=300)
+        self._sidebar.pack(side="left", fill="y")
+        self._sidebar.pack_propagate(False) # Keep width fixed
 
-        tk.Label(self._header, text="💊", bg=t["PANEL"], fg=t["ACCENT"],
-                 font=("Segoe UI Emoji", 22)).pack(side="left", padx=(20, 6), pady=12)
-        tk.Label(self._header, text="MediSearch",
-                 bg=t["PANEL"], fg=t["TEXT"], font=FONT_TITLE).pack(side="left", pady=12)
-        tk.Label(self._header, text="  Medicine Lookup Tool",
-                 bg=t["PANEL"], fg=t["MUTED"], font=("Segoe UI", 13)).pack(side="left", pady=16)
+        # Header in Sidebar
+        header_frame = tk.Frame(self._sidebar, bg=t["PANEL"])
+        header_frame.pack(fill="x", pady=(30, 20), padx=20)
+        tk.Label(header_frame, text="💊 MediSearch", bg=t["PANEL"], fg=t["ACCENT"], font=FONT_TITLE).pack(anchor="w")
+        tk.Label(header_frame, text="Medicine Lookup Tool v1.0", bg=t["PANEL"], fg=t["MUTED"], font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
 
-        tk.Label(self._header, text="v1.0", bg=t["TAG_BG"], fg=t["ACCENT"],
-                 font=FONT_MONO, padx=8, pady=2).pack(side="right", padx=20, pady=18)
+        tk.Frame(self._sidebar, bg=t["BORDER"], height=1).pack(fill="x", padx=20, pady=10)
 
-        # ── Theme switcher bar ──
-        self._theme_bar = tk.Frame(self, bg=t["BG"], pady=8, padx=20)
-        self._theme_bar.pack(fill="x")
-        tk.Label(self._theme_bar, text="THEME:", bg=t["BG"], fg=t["MUTED"],
-                 font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 8))
+        # File Section
+        file_frame = tk.Frame(self._sidebar, bg=t["PANEL"])
+        file_frame.pack(fill="x", padx=20, pady=10)
+        tk.Label(file_frame, text="1. DATABASE", bg=t["PANEL"], fg=t["TEXT"], font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 5))
+        
+        self._file_label = tk.Label(file_frame, textvariable=self.file_path, bg=t["BG"], fg=t["MUTED"], font=FONT_MONO, wraplength=250, anchor="w", justify="left", padx=10, pady=8)
+        self._file_label.pack(fill="x", pady=(0, 8))
+        
+        ttk.Button(file_frame, text="📁 Browse CSV...", style="Ghost.TButton", command=self._browse_file).pack(fill="x")
+
+        tk.Frame(self._sidebar, bg=t["BORDER"], height=1).pack(fill="x", padx=20, pady=15)
+
+        # Search Section
+        search_frame = tk.Frame(self._sidebar, bg=t["PANEL"])
+        search_frame.pack(fill="x", padx=20, pady=10)
+        tk.Label(search_frame, text="2. SEARCH MEDICINE", bg=t["PANEL"], fg=t["TEXT"], font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 5))
+
+        self._search_entry = ttk.Entry(search_frame, textvariable=self.query_var, style="Search.TEntry", font=FONT_LABEL)
+        self._search_entry.pack(fill="x", pady=(0, 8))
+        self._search_entry.bind("<Return>", lambda e: self._do_search())
+
+        self._scan_btn = ttk.Button(search_frame, text="📸 Scan Prescription", style="Ghost.TButton", command=self._scan_prescription)
+        self._scan_btn.pack(fill="x", pady=(0, 15))
+
+        # Settings Section inside Search
+        max_frame = tk.Frame(search_frame, bg=t["PANEL"])
+        max_frame.pack(fill="x", pady=(0, 15))
+        tk.Label(max_frame, text="Max Results:", bg=t["PANEL"], fg=t["MUTED"], font=FONT_SMALL).pack(side="left")
+        ttk.Spinbox(max_frame, textvariable=self.max_var, from_=1, to=500, width=8, font=FONT_LABEL).pack(side="right")
+
+        # Action Buttons
+        ttk.Button(search_frame, text="🔍 Search", style="Primary.TButton", command=self._do_search).pack(fill="x", pady=(0, 8))
+        ttk.Button(search_frame, text="✖ Clear", style="Ghost.TButton", command=self._clear).pack(fill="x")
+
+        # Theme Switcher (Bottom of Sidebar)
+        theme_frame = tk.Frame(self._sidebar, bg=t["PANEL"])
+        theme_frame.pack(side="bottom", fill="x", padx=20, pady=20)
+        tk.Label(theme_frame, text="THEME", bg=t["PANEL"], fg=t["MUTED"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 5))
+        
         self._theme_buttons = {}
         for name in THEMES:
             s = "ActiveTheme.TButton" if name == self._theme_name else "Theme.TButton"
-            btn = ttk.Button(self._theme_bar, text=name,
-                             style=s,
-                             command=lambda n=name: self._switch_theme(n))
-            btn.pack(side="left", padx=3)
+            btn = ttk.Button(theme_frame, text=name, style=s, command=lambda n=name: self._switch_theme(n))
+            btn.pack(fill="x", pady=2)
             self._theme_buttons[name] = btn
 
-        # thin accent line
-        self._accent_line = tk.Frame(self, bg=t["ACCENT"], height=2)
-        self._accent_line.pack(fill="x")
+        # Divider between Sidebar and Main Content
+        tk.Frame(self, bg=t["BORDER"], width=1).pack(side="left", fill="y")
 
-        # ── Control bar ──
-        self._ctrl = tk.Frame(self, bg=t["BG"], pady=16, padx=20)
-        self._ctrl.pack(fill="x")
+        # ── MAIN CONTENT AREA (Right Panel) ──
+        self._main_area = tk.Frame(self, bg=t["BG"])
+        self._main_area.pack(side="left", fill="both", expand=True)
 
-        # File picker
-        file_group = tk.Frame(self._ctrl, bg=t["BG"])
-        file_group.pack(side="left")
-        tk.Label(file_group, text="CSV FILE", bg=t["BG"], fg=t["MUTED"],
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        file_row = tk.Frame(file_group, bg=t["BG"])
-        file_row.pack()
-        self._file_label = tk.Label(file_row,
-                                     textvariable=self.file_path,
-                                     bg=t["PANEL"], fg=t["MUTED"],
-                                     font=FONT_MONO,
-                                     padx=10, pady=7,
-                                     width=30,
-                                     anchor="w",
-                                     relief="flat")
-        self._file_label.pack(side="left")
-        ttk.Button(file_row, text="Browse…",
-                   style="Ghost.TButton",
-                   command=self._browse_file).pack(side="left", padx=(4, 0))
+        # Top Info Bar
+        top_bar = tk.Frame(self._main_area, bg=t["HEADER_BG"], height=50)
+        top_bar.pack(fill="x", side="top")
+        top_bar.pack_propagate(False)
+        
+        tk.Label(top_bar, textvariable=self.status_var, bg=t["HEADER_BG"], fg=t["TEXT"], font=FONT_SMALL).pack(side="left", padx=20)
+        self._count_label = tk.Label(top_bar, text="", bg=t["HEADER_BG"], fg=t["ACCENT2"], font=FONT_BOLD)
+        self._count_label.pack(side="right", padx=20)
 
-        tk.Frame(self._ctrl, bg=t["BORDER"], width=1).pack(side="left", fill="y", padx=20)
+        tk.Frame(self._main_area, bg=t["BORDER"], height=1).pack(fill="x")
 
-        # Search
-        search_group = tk.Frame(self._ctrl, bg=t["BG"])
-        search_group.pack(side="left")
-        tk.Label(search_group, text="SEARCH", bg=t["BG"], fg=t["MUTED"],
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        search_row = tk.Frame(search_group, bg=t["BG"])
-        search_row.pack()
-        self._search_entry = ttk.Entry(search_row,
-                                        textvariable=self.query_var,
-                                        style="Search.TEntry",
-                                        width=28,
-                                        font=FONT_LABEL)
-        self._search_entry.pack(side="left")
-        self._search_entry.bind("<Return>", lambda e: self._do_search())
+        # Body Split (Treeview & Details)
+        body_split = tk.Frame(self._main_area, bg=t["BG"])
+        body_split.pack(fill="both", expand=True)
 
-        # --- NEW SCAN BUTTON ---
-        self._scan_btn = ttk.Button(search_row, text="📸 Scan",
-                                    style="Ghost.TButton",
-                                    command=self._scan_prescription)
-        self._scan_btn.pack(side="left", padx=(5, 0))
+        # Details Panel (Right side of Main Area)
+        self._right = tk.Frame(body_split, bg=t["PANEL"], width=350)
+        self._right.pack(side="right", fill="y")
+        self._right.pack_propagate(False)
+        tk.Frame(body_split, bg=t["BORDER"], width=1).pack(side="right", fill="y")
+        self._build_detail_panel(self._right)
 
-        tk.Frame(self._ctrl, bg=t["BG"], width=8).pack(side="left")
-
-        # Max results
-        max_group = tk.Frame(self._ctrl, bg=t["BG"])
-        max_group.pack(side="left")
-        tk.Label(max_group, text="MAX RESULTS", bg=t["BG"], fg=t["MUTED"],
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        ttk.Spinbox(max_group,
-                    textvariable=self.max_var,
-                    from_=1, to=500,
-                    width=6,
-                    font=FONT_LABEL).pack()
-
-        tk.Frame(self._ctrl, bg=t["BG"], width=12).pack(side="left")
-
-        # Search button
-        btn_group = tk.Frame(self._ctrl, bg=t["BG"])
-        btn_group.pack(side="left")
-        tk.Label(btn_group, text=" ", bg=t["BG"], font=("Segoe UI", 9)).pack()
-        ttk.Button(btn_group,
-                   text="  🔍  Search",
-                   style="Primary.TButton",
-                   command=self._do_search).pack()
-
-        # Clear button
-        clear_group = tk.Frame(self._ctrl, bg=t["BG"])
-        clear_group.pack(side="left", padx=(6, 0))
-        tk.Label(clear_group, text=" ", bg=t["BG"], font=("Segoe UI", 9)).pack()
-        ttk.Button(clear_group,
-                   text="Clear",
-                   style="Ghost.TButton",
-                   command=self._clear).pack()
-
-        # Result count badge
-        self._count_label = tk.Label(self._ctrl,
-                                      text="",
-                                      bg=t["BG"], fg=t["ACCENT2"],
-                                      font=FONT_BOLD)
-        self._count_label.pack(side="right", padx=10)
-
-        # thin divider
-        self._divider1 = tk.Frame(self, bg=t["BORDER"], height=1)
-        self._divider1.pack(fill="x")
-
-        # ── Main body ──
-        self._body = tk.Frame(self, bg=t["BG"])
-        self._body.pack(fill="both", expand=True)
-
-        # Left: results table
-        left = tk.Frame(self._body, bg=t["BG"])
-        left.pack(side="left", fill="both", expand=True)
-
-        cols_bar = tk.Frame(left, bg=t["BG"], pady=6, padx=14)
-        cols_bar.pack(fill="x")
-        tk.Label(cols_bar, text="RESULTS", bg=t["BG"], fg=t["MUTED"],
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-
-        tree_frame = tk.Frame(left, bg=t["BG"])
-        tree_frame.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        # Treeview Section (Left side of Main Area)
+        tree_container = tk.Frame(body_split, bg=t["BG"])
+        tree_container.pack(side="left", fill="both", expand=True, padx=20, pady=20)
 
         cols = ("name", "composition", "price", "manufacturer")
-        self.tree = ttk.Treeview(tree_frame,
-                                  columns=cols,
-                                  show="headings",
-                                  selectmode="browse")
+        self.tree = ttk.Treeview(tree_container, columns=cols, show="headings", selectmode="browse")
 
         self.tree.heading("name",         text="Product Name")
         self.tree.heading("composition",  text="Composition")
         self.tree.heading("price",        text="Price")
         self.tree.heading("manufacturer", text="Manufacturer")
 
-        self.tree.column("name",         width=220, anchor="w", stretch=True)
-        self.tree.column("composition",  width=220, anchor="w", stretch=True)
-        self.tree.column("price",        width=80,  anchor="center", stretch=False)
-        self.tree.column("manufacturer", width=150, anchor="w", stretch=True)
+        self.tree.column("name",         width=250, anchor="w", stretch=True)
+        self.tree.column("composition",  width=250, anchor="w", stretch=True)
+        self.tree.column("price",        width=100, anchor="center", stretch=False)
+        self.tree.column("manufacturer", width=180, anchor="w", stretch=True)
 
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical",   command=self.tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
+        vsb = ttk.Scrollbar(tree_container, orient="vertical",   command=self.tree.yview)
+        hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
-        tree_frame.rowconfigure(0, weight=1)
-        tree_frame.columnconfigure(0, weight=1)
+        tree_container.rowconfigure(0, weight=1)
+        tree_container.columnconfigure(0, weight=1)
 
         self.tree.tag_configure("odd",  background=t["ROW_ODD"])
         self.tree.tag_configure("even", background=t["ROW_EVEN"])
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
-        # Right: detail panel
-        self._right_border = tk.Frame(self._body, bg=t["BORDER"], width=1)
-        self._right_border.pack(side="left", fill="y")
-
-        self._right = tk.Frame(self._body, bg=t["PANEL"], width=340)
-        self._right.pack(side="left", fill="y")
-        self._right.pack_propagate(False)
-
-        self._build_detail_panel(self._right)
-
-        # ── Status bar ──
-        self._status_border = tk.Frame(self, bg=t["BORDER"], height=1)
-        self._status_border.pack(fill="x")
-        self._status_bar = tk.Frame(self, bg=t["STATUS_BG"], height=28)
-        self._status_bar.pack(fill="x", side="bottom")
-        self._status_bar.pack_propagate(False)
-        tk.Label(self._status_bar, textvariable=self.status_var,
-                 bg=t["STATUS_BG"], fg=t["MUTED"],
-                 font=FONT_MONO,
-                 anchor="w", padx=14).pack(fill="x", side="left")
 
     def _build_detail_panel(self, parent):
         t = self._t
-        top = tk.Frame(parent, bg=t["PANEL"], pady=14, padx=16)
+        top = tk.Frame(parent, bg=t["PANEL"], pady=18, padx=20)
         top.pack(fill="x")
-        tk.Label(top, text="DETAILS", bg=t["PANEL"], fg=t["MUTED"],
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        tk.Label(top, text="MEDICINE DETAILS", bg=t["PANEL"], fg=t["TEXT"], font=("Segoe UI", 11, "bold")).pack(anchor="w")
 
         tk.Frame(parent, bg=t["BORDER"], height=1).pack(fill="x")
 
@@ -545,8 +436,7 @@ class MedicineApp(tk.Tk):
         canvas.pack(side="left", fill="both", expand=True)
 
         self._detail_inner = tk.Frame(canvas, bg=t["PANEL"])
-        self._canvas_window = canvas.create_window(
-            (0, 0), window=self._detail_inner, anchor="nw")
+        self._canvas_window = canvas.create_window((0, 0), window=self._detail_inner, anchor="nw")
 
         def on_configure(e):
             canvas.configure(scrollregion=canvas.bbox("all"))
@@ -566,7 +456,7 @@ class MedicineApp(tk.Tk):
         for w in self._detail_inner.winfo_children():
             w.destroy()
         tk.Label(self._detail_inner,
-                 text="\n\n\n\nSelect a result\nto see details.",
+                 text="\n\n\n\n\n🔍\n\nSelect a medicine from the\nlist to view its details.",
                  bg=t["PANEL"], fg=t["MUTED"],
                  font=("Segoe UI", 12),
                  justify="center").pack(fill="both", expand=True, pady=40)
@@ -576,12 +466,12 @@ class MedicineApp(tk.Tk):
         for w in self._detail_inner.winfo_children():
             w.destroy()
 
-        pad = dict(padx=16, anchor="w")
+        pad = dict(padx=20, anchor="w")
 
         def section(label, value):
             tk.Label(self._detail_inner, text=label,
                      bg=t["PANEL"], fg=t["MUTED"],
-                     font=("Segoe UI", 9, "bold"), **pad).pack(fill="x", pady=(12, 2))
+                     font=("Segoe UI", 9, "bold"), **pad).pack(fill="x", pady=(15, 4))
             val = value.strip() if value else "—"
             tk.Label(self._detail_inner, text=val,
                      bg=t["PANEL"], fg=t["TEXT"],
@@ -589,27 +479,27 @@ class MedicineApp(tk.Tk):
                      wraplength=290,
                      justify="left", **pad).pack(fill="x")
             tk.Frame(self._detail_inner, bg=t["BORDER"], height=1).pack(
-                fill="x", padx=16, pady=(10, 0))
+                fill="x", padx=20, pady=(12, 0))
 
         # Medicine name
         tk.Label(self._detail_inner,
                  text=med.get('product_name', '—'),
                  bg=t["PANEL"], fg=t["ACCENT"],
-                 font=("Segoe UI", 13, "bold"),
+                 font=("Segoe UI", 16, "bold"),
                  wraplength=290,
                  justify="left",
-                 padx=16, anchor="w").pack(fill="x", pady=(16, 4))
+                 padx=20, anchor="w").pack(fill="x", pady=(20, 8))
 
         # Price badge
         price = med.get('product_price', '—').strip()
-        pk = tk.Frame(self._detail_inner, bg=t["PANEL"], padx=16)
-        pk.pack(fill="x", pady=(0, 8))
+        pk = tk.Frame(self._detail_inner, bg=t["PANEL"], padx=20)
+        pk.pack(fill="x", pady=(0, 12))
         tk.Label(pk, text=f"Rs. {price}" if price else "Price N/A",
                  bg=t["TAG_BG"], fg=t["ACCENT2"],
                  font=FONT_BOLD,
-                 padx=10, pady=3).pack(side="left")
+                 padx=12, pady=6).pack(side="left")
 
-        tk.Frame(self._detail_inner, bg=t["BORDER"], height=1).pack(fill="x", padx=16)
+        tk.Frame(self._detail_inner, bg=t["BORDER"], height=1).pack(fill="x", padx=20)
 
         section("SALT COMPOSITION",  med.get('salt_composition', ''))
         section("MANUFACTURER",      med.get('product_manufactured', ''))
@@ -620,23 +510,23 @@ class MedicineApp(tk.Tk):
         tk.Label(self._detail_inner, text="AVAILABLE AT",
                  bg=t["PANEL"], fg=t["MUTED"],
                  font=("Segoe UI", 9, "bold"),
-                 padx=16, anchor="w").pack(fill="x", pady=(12, 2))
+                 padx=20, anchor="w").pack(fill="x", pady=(15, 4))
 
         if shop:
-            shop_frame = tk.Frame(self._detail_inner, bg=t["PANEL"], padx=16)
-            shop_frame.pack(fill="x", pady=(2, 16))
+            shop_frame = tk.Frame(self._detail_inner, bg=t["PANEL"], padx=20)
+            shop_frame.pack(fill="x", pady=(2, 20))
 
             tk.Label(shop_frame,
                      text=f"🏪  {shop['name']}",
-                     bg=t["PANEL"], fg=t["ACCENT"],
+                     bg=t["PANEL"], fg=t["TEXT"],
                      font=FONT_BOLD).pack(anchor="w")
 
             link = tk.Label(shop_frame,
                             text="📍 View on Google Maps",
-                            bg=t["PANEL"], fg=t["ACCENT2"],
+                            bg=t["PANEL"], fg=t["ACCENT"],
                             font=FONT_SMALL,
                             cursor="hand2")
-            link.pack(anchor="w", pady=(6, 0))
+            link.pack(anchor="w", pady=(8, 0))
             link.bind("<Button-1>", lambda e, url=shop['url']: webbrowser.open(url))
 
     # ── Theme Switching ──────────────────────
